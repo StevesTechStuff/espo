@@ -1,0 +1,82 @@
+version: "3.9"
+
+services:
+  traefik:
+    image: traefik:latest
+    container_name: traefik
+    command:
+      - --api.insecure=true
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.web.address=:80
+      - --entrypoints.web.http.redirections.entryPoint.to=websecure
+      - --entrypoints.web.http.redirections.entryPoint.scheme=https
+      - --entrypoints.web.http.redirections.entrypoint.permanent=true
+      - --certificatesresolvers.myresolver.acme.tlschallenge=true
+      - --certificatesresolvers.myresolver.acme.email=${YOUR_EMAIL}
+      - --certificatesresolvers.myresolver.acme.storage=/letsencrypt/acme.json
+    ports:
+      - "80:80"
+      - "8080:8080"
+      - "443:443"
+    volumes:
+      - ./letsencrypt:/letsencrypt
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+  mysql:
+    image: mysql:latest
+    container_name: mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    restart: always
+
+  espocrm:
+    image: espocrm/espocrm:latest
+    container_name: espocrm
+    environment:
+      ESPOCRM_DATABASE_HOST: mysql
+      ESPOCRM_DATABASE_USER: ${MYSQL_USER}
+      ESPOCRM_DATABASE_PASSWORD: ${MYSQL_PASSWORD}
+      ESPOCRM_ADMIN_USERNAME: ${ESPOCRM_ADMIN_USERNAME}
+      ESPOCRM_ADMIN_PASSWORD: ${ESPOCRM_ADMIN_PASSWORD}
+      ESPOCRM_SITE_URL: ${ESPOCRM_SITE_URL}
+    volumes:
+      - espocrm_data:/var/www/html
+    restart: always
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.espocrm.rule=Host(`${ESPOCRM_SITE_URL}`)
+      - traefik.http.routers.espocrm.entrypoints=websecure
+      - traefik.http.routers.espocrm.tls=true
+      - traefik.http.routers.espocrm.tls.certresolver=myresolver
+
+  espocrm-daemon:
+    image: espocrm/espocrm:latest
+    container_name: espocrm-daemon
+    volumes:
+      - espocrm_data:/var/www/html
+    restart: always
+    entrypoint: docker-daemon.sh
+
+  espocrm-websocket:
+    image: espocrm/espocrm:latest
+    container_name: espocrm-websocket
+    environment:
+      ESPOCRM_CONFIG_USE_WEB_SOCKET: "true"
+      ESPOCRM_CONFIG_WEB_SOCKET_URL: "wss://${ESPOCRM_SITE_URL}/ws"
+      ESPOCRM_CONFIG_WEB_SOCKET_ZERO_M_Q_SUBSCRIBER_DSN: "tcp://*:7777"
+      ESPOCRM_CONFIG_WEB_SOCKET_ZERO_M_Q_SUBMISSION_DSN: "tcp://espocrm-websocket:7777"
+    volumes:
+      - espocrm_data:/var/www/html
+    restart: always
+    entrypoint: docker-websocket.sh
+
+volumes:
+  mysql_data:
+  espocrm_data:
